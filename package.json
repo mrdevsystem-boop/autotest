@@ -1,0 +1,12 @@
+{
+  "name": "ai-testing-platform",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.18.3",
+  "scripts": {
+    "dev:api": "pnpm --filter @aitest/api dev",
+    "dev:web": "pnpm --filter @aitest/web dev",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
