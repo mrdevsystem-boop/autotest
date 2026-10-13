@@ -19,7 +19,7 @@ test('migrates existing v0 database without deleting projects and supports Suite
   const server=createApp(store);
   try {
     assert.equal(store.list()[0]?.name,'Old Project');
-    assert.equal((store.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version,2);
+    assert.equal((store.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version,3);
     await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));
     const address=server.address(); if (!address || typeof address==='string') throw new Error('address');
     const base=`http://127.0.0.1:${address.port}`;

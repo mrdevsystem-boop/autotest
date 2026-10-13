@@ -2,8 +2,9 @@ import { createServer, type IncomingMessage, type ServerResponse } from 'node:ht
 import { PLATFORM_NAME, type HealthResponse } from '@aitest/contracts';
 import { ProjectStore, validProject } from './projects.js';
 import type { SqliteStore } from './sqlite.js';
+import { parseWebSteps, executeWebSteps, InvalidStepsError, AssertionFailure } from './playwright-runner.js';
 type ProjectRepository = Pick<ProjectStore, 'list' | 'get' | 'create' | 'update' | 'delete'>;
-type Store = ProjectRepository & Partial<Pick<SqliteStore, 'listSuites' | 'createSuite' | 'deleteSuite' | 'getSuite' | 'updateSuite' | 'listCases' | 'createCase' | 'deleteCase' | 'getCase' | 'updateCase'>>;
+type Store = ProjectRepository & Partial<Pick<SqliteStore, 'listSuites' | 'createSuite' | 'deleteSuite' | 'getSuite' | 'updateSuite' | 'listCases' | 'createCase' | 'deleteCase' | 'getCase' | 'updateCase' | 'createRun' | 'getRun' | 'listRuns' | 'transitionRun'>>;
 const send = (res: ServerResponse, status: number, body: unknown) => {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8',
     'access-control-allow-origin': 'http://127.0.0.1:5173',
@@ -25,6 +26,7 @@ function validName(v: unknown): v is {name: string; steps?: string; kind?: strin
     (x.kind === undefined || (typeof x.kind === 'string' && ['web','api','mobile'].includes(x.kind)));
 }
 export function createApp(store: Store = new ProjectStore()) {
+  let busy = false;
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (req.method === 'OPTIONS') return send(res, 204, null);
@@ -78,6 +80,56 @@ export function createApp(store: Store = new ProjectStore()) {
     }
     const caseDelete = /^\/api\/cases\/([0-9a-f-]{36})$/.exec(url.pathname);
     if (caseDelete && req.method === 'DELETE' && store.deleteCase) return send(res,store.deleteCase(caseDelete[1]) ? 204 : 404,null);
+    // S1-04.1/2: record and inspect run requests; no test process is executed yet.
+    const runCreate = /^\/api\/cases\/([0-9a-f-]{36})\/runs$/.exec(url.pathname);
+    if (runCreate && store.createRun && store.listRuns && store.getCase) {
+      const caseId=runCreate[1];
+      if (!store.getCase(caseId)) return send(res,404,{error:'not_found'});
+      if (req.method==='GET') return send(res,200,{data:store.listRuns(caseId)});
+      if (req.method==='POST') {
+        try {
+          const payload=await bodyJson(req);
+          if (!payload || typeof payload!=='object') return send(res,400,{error:'invalid_run'});
+          const engine=(payload as Record<string,unknown>).engine;
+          if (engine!=='playwright' && engine!=='pytest' && engine!=='selenium') return send(res,400,{error:'invalid_engine'});
+          const testCase=store.getCase(caseId)!;
+          if ((testCase.kind==='api' && engine!=='pytest') || (testCase.kind==='web' && engine==='pytest') || testCase.kind==='mobile')
+            return send(res,400,{error:'unsupported_case_engine'});
+          const run=store.createRun(caseId,engine);
+          return send(res,run?201:404,run?{data:run}:{error:'not_found'});
+        } catch { return send(res,400,{error:'invalid_json_or_size'}); }
+      }
+    }
+    const runExecute = /^\/api\/runs\/([0-9a-f-]{36})\/execute$/.exec(url.pathname);
+    if (runExecute && req.method === 'POST' && store.getRun && store.getCase && store.transitionRun) {
+      const run = store.getRun(runExecute[1]);
+      if (!run) return send(res,404,{error:'not_found'});
+      if (run.status !== 'queued') return send(res,409,{error:'run_not_queued'});
+      if (run.engine !== 'playwright') return send(res,400,{error:'unsupported_engine'});
+      if (!run.testCaseId) return send(res,409,{error:'case_deleted'});
+      const testCase = store.getCase(run.testCaseId);
+      if (!testCase || testCase.kind !== 'web') return send(res,409,{error:'case_unavailable'});
+      if (busy) return send(res,409,{error:'runner_busy'});
+      let steps;
+      try { steps = parseWebSteps(testCase.steps); }
+      catch (error) { return send(res,400,{error:error instanceof InvalidStepsError ? error.message : 'invalid_steps'}); }
+      const started = store.transitionRun(run.id,'queued','running');
+      if (!started) return send(res,409,{error:'run_not_queued'});
+      busy = true;
+      // Do not block the HTTP request while Chromium runs.
+      void executeWebSteps(steps).then(output => {
+        store.transitionRun!(run.id,'running','passed',{output});
+      }).catch(error => {
+        const status = error instanceof AssertionFailure ? 'failed' : 'error';
+        store.transitionRun!(run.id,'running',status,{errorMessage:String(error instanceof Error ? error.message : error)});
+      }).finally(() => { busy = false; });
+      return send(res,202,{data:started});
+    }
+    const runDetail = /^\/api\/runs\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if (runDetail && req.method==='GET' && store.getRun) {
+      const run=store.getRun(runDetail[1]);
+      return send(res,run?200:404,run?{data:run}:{error:'not_found'});
+    }
     return send(res,404,{error:'not_found'});
   });
 }
