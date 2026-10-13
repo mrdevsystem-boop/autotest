@@ -3,7 +3,7 @@ import { PLATFORM_NAME, type HealthResponse } from '@aitest/contracts';
 import { ProjectStore, validProject } from './projects.js';
 import type { SqliteStore } from './sqlite.js';
 type ProjectRepository = Pick<ProjectStore, 'list' | 'get' | 'create' | 'update' | 'delete'>;
-type Store = ProjectRepository & Partial<Pick<SqliteStore, 'listSuites' | 'createSuite' | 'deleteSuite' | 'getSuite' | 'updateSuite' | 'listCases' | 'createCase' | 'deleteCase' | 'getCase' | 'updateCase'>>;
+type Store = ProjectRepository & Partial<Pick<SqliteStore, 'listSuites' | 'createSuite' | 'deleteSuite' | 'getSuite' | 'updateSuite' | 'listCases' | 'createCase' | 'deleteCase' | 'getCase' | 'updateCase' | 'createRun' | 'getRun' | 'listRuns' | 'transitionRun'>>;
 const send = (res: ServerResponse, status: number, body: unknown) => {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8',
     'access-control-allow-origin': 'http://127.0.0.1:5173',
@@ -78,6 +78,31 @@ export function createApp(store: Store = new ProjectStore()) {
     }
     const caseDelete = /^\/api\/cases\/([0-9a-f-]{36})$/.exec(url.pathname);
     if (caseDelete && req.method === 'DELETE' && store.deleteCase) return send(res,store.deleteCase(caseDelete[1]) ? 204 : 404,null);
+    // S1-04.1/2: record and inspect run requests; no test process is executed yet.
+    const runCreate = /^\/api\/cases\/([0-9a-f-]{36})\/runs$/.exec(url.pathname);
+    if (runCreate && store.createRun && store.listRuns && store.getCase) {
+      const caseId=runCreate[1];
+      if (!store.getCase(caseId)) return send(res,404,{error:'not_found'});
+      if (req.method==='GET') return send(res,200,{data:store.listRuns(caseId)});
+      if (req.method==='POST') {
+        try {
+          const payload=await bodyJson(req);
+          if (!payload || typeof payload!=='object') return send(res,400,{error:'invalid_run'});
+          const engine=(payload as Record<string,unknown>).engine;
+          if (engine!=='playwright' && engine!=='pytest' && engine!=='selenium') return send(res,400,{error:'invalid_engine'});
+          const testCase=store.getCase(caseId)!;
+          if ((testCase.kind==='api' && engine!=='pytest') || (testCase.kind==='web' && engine==='pytest') || testCase.kind==='mobile')
+            return send(res,400,{error:'unsupported_case_engine'});
+          const run=store.createRun(caseId,engine);
+          return send(res,run?201:404,run?{data:run}:{error:'not_found'});
+        } catch { return send(res,400,{error:'invalid_json_or_size'}); }
+      }
+    }
+    const runDetail = /^\/api\/runs\/([0-9a-f-]{36})$/.exec(url.pathname);
+    if (runDetail && req.method==='GET' && store.getRun) {
+      const run=store.getRun(runDetail[1]);
+      return send(res,run?200:404,run?{data:run}:{error:'not_found'});
+    }
     return send(res,404,{error:'not_found'});
   });
 }

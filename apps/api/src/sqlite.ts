@@ -6,6 +6,13 @@ import type { Project } from './projects.js';
 
 export interface TestSuite { id: string; projectId: string; name: string; createdAt: string }
 export interface TestCase { id: string; suiteId: string; name: string; steps: string; kind: string; description: string; createdAt: string }
+export type RunStatus = 'queued' | 'running' | 'passed' | 'failed' | 'error' | 'cancelled';
+export interface TestRun {
+  id: string; testCaseId: string | null; caseName: string; engine: string;
+  status: RunStatus; createdAt: string; startedAt: string | null;
+  finishedAt: string | null; durationMs: number | null;
+  output: string; errorMessage: string;
+}
 export class SqliteStore {
   readonly db: DatabaseSync;
   constructor(filename: string) {
@@ -13,7 +20,7 @@ export class SqliteStore {
     this.db = new DatabaseSync(filename);
     this.db.exec('PRAGMA foreign_keys = ON;');
     const version = Number((this.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version);
-    if (version > 2) throw new Error(`Unsupported database schema version ${version}`);
+    if (version > 3) throw new Error(`Unsupported database schema version ${version}`);
     // Version 1 adopts the original S1-03 tables without removing existing rows.
     if (version < 1) {
       this.db.exec(`BEGIN IMMEDIATE;
@@ -34,6 +41,61 @@ export class SqliteStore {
         this.db.exec('PRAGMA user_version = 2; COMMIT;');
       } catch (error) { this.db.exec('ROLLBACK;'); throw error; }
     }
+    if (Number((this.db.prepare('PRAGMA user_version').get() as {user_version:number}).user_version) < 3) {
+      this.db.exec(`BEGIN IMMEDIATE;
+        CREATE TABLE IF NOT EXISTS test_runs (
+          id TEXT PRIMARY KEY,
+          test_case_id TEXT REFERENCES test_cases(id) ON DELETE SET NULL,
+          case_name TEXT NOT NULL,
+          engine TEXT NOT NULL CHECK(engine IN ('playwright','pytest','selenium')),
+          status TEXT NOT NULL CHECK(status IN ('queued','running','passed','failed','error','cancelled')),
+          created_at TEXT NOT NULL,
+          started_at TEXT,
+          finished_at TEXT,
+          duration_ms INTEGER,
+          output TEXT NOT NULL DEFAULT '',
+          error_message TEXT NOT NULL DEFAULT ''
+        );
+        CREATE INDEX IF NOT EXISTS idx_runs_case ON test_runs(test_case_id,created_at);
+        PRAGMA user_version = 3;
+        COMMIT;`);
+    }
+  }
+  private run(row: any): TestRun | undefined {
+    return row ? { id:row.id, testCaseId:row.test_case_id, caseName:row.case_name,
+      engine:row.engine, status:row.status, createdAt:row.created_at,
+      startedAt:row.started_at, finishedAt:row.finished_at, durationMs:row.duration_ms,
+      output:row.output, errorMessage:row.error_message } : undefined;
+  }
+  createRun(testCaseId: string, engine: 'playwright' | 'pytest' | 'selenium'): TestRun | undefined {
+    const testCase = this.getCase(testCaseId);
+    if (!testCase) return undefined;
+    const id=randomUUID(); const createdAt=new Date().toISOString();
+    this.db.prepare(`INSERT INTO test_runs (id,test_case_id,case_name,engine,status,created_at)
+      VALUES (?,?,?,?,?,?)`).run(id,testCaseId,testCase.name,engine,'queued',createdAt);
+    return this.getRun(id);
+  }
+  getRun(id: string): TestRun | undefined {
+    return this.run(this.db.prepare('SELECT * FROM test_runs WHERE id=?').get(id));
+  }
+  listRuns(testCaseId: string): TestRun[] {
+    return (this.db.prepare('SELECT * FROM test_runs WHERE test_case_id=? ORDER BY created_at DESC,id DESC LIMIT 100').all(testCaseId) as any[]).map(r=>this.run(r)!);
+  }
+  transitionRun(id: string, expected: RunStatus, next: RunStatus, details: {output?:string;errorMessage?:string} = {}): TestRun | undefined {
+    const allowed: Record<RunStatus, RunStatus[]> = {
+      queued:['running','cancelled'], running:['passed','failed','error','cancelled'],
+      passed:[],failed:[],error:[],cancelled:[]
+    };
+    if (!allowed[expected].includes(next)) throw new Error('invalid_run_transition');
+    const previous=this.getRun(id);
+    if (!previous || previous.status !== expected) return undefined;
+    const now=new Date().toISOString();
+    const startedAt=next==='running' ? now : previous.startedAt;
+    const finishedAt=['passed','failed','error','cancelled'].includes(next) ? now : null;
+    const durationMs=finishedAt && startedAt ? Math.max(0,Date.parse(finishedAt)-Date.parse(startedAt)) : null;
+    const result=this.db.prepare(`UPDATE test_runs SET status=?,started_at=?,finished_at=?,duration_ms=?,output=?,error_message=? WHERE id=? AND status=?`)
+      .run(next,startedAt,finishedAt,durationMs,(details.output??previous.output).slice(0,10000),(details.errorMessage??previous.errorMessage).slice(0,2000),id,expected);
+    return result.changes ? this.getRun(id) : undefined;
   }
   close() { this.db.close(); }
   private project(row: any): Project | undefined { return row ? { id: row.id, name: row.name, description: row.description, createdAt: row.created_at } : undefined; }
