@@ -405,6 +405,7 @@ function renderAiGeneration(suiteId: string): HTMLElement {
         for (const draft of response.data.drafts) {
           const card = document.createElement('div');
           card.className = 'case';
+          card.setAttribute('data-testid', 'ai-draft');
 
           const name = document.createElement('strong');
           name.textContent = draft.name;

@@ -42,7 +42,9 @@ function logPass(name) { console.log(`PASS ${name}`); }
 async function main() {
   temp = await mkdtemp(join(tmpdir(), 'aitest-e2e-'));
   const dbPath = join(temp, 'regression.sqlite');
-  const api = launch('API', apiDir, ['--import', 'tsx', 'src/index.ts'], { AITEST_PORT: '3101', AITEST_DB_PATH: dbPath, AITEST_WEB_ORIGIN: webBase });
+  const mock = launch('Mock AI', apiDir, ['e2e/mock-ai.mjs'], { AITEST_MOCK_AI_PORT: '4114' });
+  await waitFor('http://127.0.0.1:4114/health', mock);
+  const api = launch('API', apiDir, ['--import', 'tsx', 'src/index.ts'], { AITEST_PORT: '3101', AITEST_DB_PATH: dbPath, AITEST_WEB_ORIGIN: webBase, AI_BASE_URL: 'http://127.0.0.1:4114/v1', AI_API_KEY: 'local-e2e-only', AI_MODEL: 'mock-e2e' });
   const vite = launch('Vite', webDir, ['node_modules/vite/bin/vite.js', '--host', '127.0.0.1', '--port', '5174', '--strictPort'], { VITE_API_URL: apiBase });
   await Promise.all([waitFor('http://127.0.0.1:3101/health', api), waitFor(webBase, vite)]);
   const project = await call('/projects', 'POST', { name: 'E2E Regression Project', description: 'Temporary isolated test' });
@@ -110,7 +112,43 @@ async function main() {
   await dashboard.getByRole('button', { name: 'Refresh metrics' }).click();
   await dashboard.getByText('Total Runs').waitFor();
   logPass('Refresh history and metrics');
-  console.log('E2E PASS: 6 regression groups');
+  // AI generation is draft-only until an explicit user approval.
+  const aiPanel = section.locator('.suite').filter({ hasText: 'Suite: Regression Suite' }).locator('.ai-generation');
+  await aiPanel.locator('textarea').fill('Generate three deterministic browser test cases');
+  await aiPanel.getByRole('combobox', { name: 'Maximum generated test cases' }).selectOption('3');
+  await aiPanel.getByRole('button', { name: 'Generate with AI' }).click();
+  await aiPanel.getByText('3 draft(s) generated. Review before saving.').waitFor();
+  const draftCards = aiPanel.locator('[data-testid="ai-draft"]');
+  assert.equal(await draftCards.count(), 3);
+  for (let n = 1; n <= 3; n++) {
+    const card = draftCards.filter({ hasText: `E2E AI draft ${n}` });
+    assert.equal(await card.count(), 1);
+    assert.match(await card.locator('pre').innerText(), /"action": "goto"/);
+  }
+  assert.equal((await call(`/suites/${suite.id}/cases`)).length, 1, 'Generation must not persist drafts');
+  logPass('AI Generate, preview and no persistence before approval');
+
+  await draftCards.filter({ hasText: 'E2E AI draft 2' }).getByRole('button', { name: 'Discard' }).click();
+  assert.equal(await draftCards.count(), 2);
+  assert.equal((await call(`/suites/${suite.id}/cases`)).length, 1, 'Discard must not persist drafts');
+  logPass('AI Discard preserves other drafts without persistence');
+
+  await draftCards.filter({ hasText: 'E2E AI draft 1' }).getByRole('button', { name: 'Approve & Save' }).click();
+  await aiPanel.getByText('Test case saved. Review the remaining drafts.').waitFor();
+  assert.equal(await draftCards.count(), 1);
+  assert.equal(await draftCards.filter({ hasText: 'E2E AI draft 3' }).count(), 1);
+  let cases = await call(`/suites/${suite.id}/cases`);
+  assert.deepEqual(cases.filter(c => c.name.startsWith('E2E AI draft')).map(c => c.name), ['E2E AI draft 1']);
+  logPass('AI Approve saves only selected draft and preserves remaining draft');
+
+  await draftCards.filter({ hasText: 'E2E AI draft 3' }).getByRole('button', { name: 'Approve & Save' }).click();
+  await draftCards.first().waitFor({ state: 'detached' });
+  await section.getByText('[web] E2E AI draft 3', { exact: false }).waitFor();
+  cases = await call(`/suites/${suite.id}/cases`);
+  assert.deepEqual(cases.filter(c => c.name.startsWith('E2E AI draft')).map(c => c.name).sort(), ['E2E AI draft 1', 'E2E AI draft 3']);
+  assert.equal(cases.some(c => c.name === 'E2E AI draft 2'), false);
+  logPass('AI Multi-Draft approval and refresh with discarded draft absent');
+  console.log('E2E PASS: 10 regression groups (6 reporting + 4 AI UI)');
 }
 try { await main(); }
 catch (e) {

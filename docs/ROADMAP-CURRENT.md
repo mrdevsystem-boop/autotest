@@ -1,4 +1,4 @@
-﻿# AI Testing Platform — Current Roadmap
+# AI Testing Platform — Current Roadmap
 
 This document records the current implementation track.
 The original Sprint 1 plan is preserved at:
@@ -9,15 +9,16 @@ docs/sprints/sprint-01/PLAN.md
 - S1-01 through S1-04: completed on the prior implementation track.
 - S1-05 Test Reporting: completed, merged and pushed to main.
 - S1-05 verification commit: b8e901f.
+- S1-06 AI Test Case Generation: merged to main in PR #1, merge commit 317851b; local sync verified.
 
 ## Current milestone
 
-S1-06: AI Test Case Generation
+S1-07: Automated UI Testing & Quality Gate (implementation in progress)
 
-- S1-06.1 Architecture and shared contracts
-- S1-06.2 AI provider and backend generation API
-- S1-06.3 Web preview and human approval
-- S1-06.4 E2E and full regression
+- S1-07.1 Discovery: complete
+- S1-07.2 Architecture: documented in `docs/sprints/sprint-01/S1-07-ARCHITECTURE.md`
+- S1-07.3 AI UI automated regression: patch prepared; Windows verification pending
+- S1-07.4 Full quality gate and merge: pending
 
 ## Historical-plan reconciliation
 
