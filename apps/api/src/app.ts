@@ -1,6 +1,8 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { PLATFORM_NAME, type HealthResponse } from '@aitest/contracts';
 import { ProjectStore, validProject } from './projects.js';
+import type { AIProvider } from './ai-provider.js';
+import { generateTestCases } from './ai-generation.js';
 import type { SqliteStore, RunStatus } from './sqlite.js';
 import { parseWebSteps, executeWebSteps, InvalidStepsError, AssertionFailure } from './playwright-runner.js';
 type ProjectRepository = Pick<ProjectStore, 'list' | 'get' | 'create' | 'update' | 'delete'>;
@@ -25,11 +27,28 @@ function validName(v: unknown): v is {name: string; steps?: string; kind?: strin
     (x.description === undefined || (typeof x.description === 'string' && x.description.length <= 2000)) &&
     (x.kind === undefined || (typeof x.kind === 'string' && ['web','api','mobile'].includes(x.kind)));
 }
-export function createApp(store: Store = new ProjectStore()) {
+export function createApp(store: Store = new ProjectStore(), aiProvider?: AIProvider) {
   let busy = false;
   return createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (req.method === 'OPTIONS') return send(res, 204, null);
+    if (req.method === 'POST' && url.pathname === '/api/ai/test-cases/generate') {
+      let payload: unknown;
+
+      try {
+        payload = await bodyJson(req);
+      } catch {
+        return send(res, 400, { error: 'invalid_generation_request' });
+      }
+
+      const result = await generateTestCases(
+        payload,
+        (suiteId) => Boolean(store.getSuite?.(suiteId)),
+        aiProvider,
+      );
+
+      return send(res, result.status, result.body);
+    }
     if (req.method === 'GET' && url.pathname === '/health') {
       const health: HealthResponse = { status: 'ok', service: PLATFORM_NAME, version: '0.1.0' };
       return send(res, 200, health);
