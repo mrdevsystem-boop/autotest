@@ -7,6 +7,7 @@
     "dev:api": "pnpm --filter @aitest/api dev",
     "dev:web": "pnpm --filter @aitest/web dev",
     "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck"
+    "typecheck": "pnpm -r typecheck",
+    "build": "pnpm --filter @aitest/web build"
   }
 }

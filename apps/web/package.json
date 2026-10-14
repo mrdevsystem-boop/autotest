@@ -2,7 +2,7 @@
   "name":"@aitest/web",
   "private":true,
   "version":"0.1.0",
-  "scripts":{"dev":"vite --host 127.0.0.1","typecheck":"tsc --noEmit","test":"node --test"},
+  "scripts":{"dev":"vite --host 127.0.0.1","typecheck":"tsc --noEmit","test":"node --test","build":"tsc --noEmit && vite build"},
   "dependencies":{"@aitest/contracts":"workspace:*"},
   "devDependencies":{"vite":"^7.1.0","typescript":"^5.9.0"}
 }
