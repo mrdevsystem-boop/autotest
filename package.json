@@ -8,6 +8,7 @@
     "dev:web": "pnpm --filter @aitest/web dev",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "build": "pnpm --filter @aitest/web build"
+    "build": "pnpm --filter @aitest/web build",
+    "test:e2e": "pnpm --filter @aitest/api test:e2e"
   }
 }

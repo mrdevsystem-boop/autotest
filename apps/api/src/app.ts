@@ -7,7 +7,7 @@ type ProjectRepository = Pick<ProjectStore, 'list' | 'get' | 'create' | 'update'
 type Store = ProjectRepository & Partial<Pick<SqliteStore, 'listSuites' | 'createSuite' | 'deleteSuite' | 'getSuite' | 'updateSuite' | 'listCases' | 'createCase' | 'deleteCase' | 'getCase' | 'updateCase' | 'createRun' | 'getRun' | 'listRuns' | 'transitionRun' | 'reportSummary' | 'reportRuns'>>;
 const send = (res: ServerResponse, status: number, body: unknown) => {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8',
-    'access-control-allow-origin': 'http://127.0.0.1:5173',
+    'access-control-allow-origin': process.env.AITEST_WEB_ORIGIN ?? 'http://127.0.0.1:5173',
     'access-control-allow-methods': 'GET,POST,PUT,DELETE,OPTIONS',
     'access-control-allow-headers': 'content-type' });
   res.end(status === 204 ? undefined : JSON.stringify(body));

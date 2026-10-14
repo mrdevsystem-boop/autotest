@@ -8,7 +8,7 @@ interface Run { id: string; caseName: string; engine: string; status: RunStatus;
 
 const root = document.querySelector<HTMLElement>('#app');
 if (!root) throw new Error('App root missing');
-const api = 'http://127.0.0.1:3001/api';
+const api = import.meta.env.VITE_API_URL ?? 'http://127.0.0.1:3001/api';
 const polling = new Set<ReturnType<typeof setInterval>>();
 const terminal = new Set<RunStatus>(['passed', 'failed', 'error', 'cancelled']);
 
