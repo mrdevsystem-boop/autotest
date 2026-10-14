@@ -231,7 +231,7 @@ function renderProjectRunHistory(projectId: string): HTMLElement {
         table.style.cssText = 'width:100%;border-collapse:collapse;margin-top:10px';
         const head = document.createElement('thead');
         const headRow = document.createElement('tr');
-        for (const label of ['Test Case', 'Status', 'Created', 'Duration', 'Run ID']) {
+        for (const label of ['Test Case', 'Status', 'Created', 'Duration', 'Run ID', 'Details']) {
           const th = document.createElement('th');
           th.textContent = label;
           th.style.cssText = 'text-align:left;border-bottom:1px solid #dce2ea;padding:7px';
@@ -249,7 +249,59 @@ function renderProjectRunHistory(projectId: string): HTMLElement {
             if (i === 1) td.className = `run-state ${run.status}`;
             tr.append(td);
           }
-          body.append(tr);
+          // S1-05.4: expandable project run details, using the existing report payload.
+          const actionCell = document.createElement('td');
+          actionCell.style.cssText = 'border-bottom:1px solid #edf1f6;padding:7px';
+          const detailRow = document.createElement('tr');
+          detailRow.hidden = true;
+          const detailCell = document.createElement('td');
+          detailCell.colSpan = 6;
+          detailCell.style.cssText = 'padding:12px;border-bottom:1px solid #dce2ea;background:#f8fafc';
+          const detailPanel = document.createElement('div');
+          detailPanel.style.cssText = 'display:grid;gap:8px;min-width:0';
+          const field = (label: string, value: string) => {
+            const item = document.createElement('div');
+            const strong = document.createElement('strong');
+            strong.textContent = `${label}: `;
+            const content = document.createElement('span');
+            content.textContent = value;
+            item.append(strong, content);
+            return item;
+          };
+          const dateText = (value: string | null | undefined) =>
+            value ? new Date(value).toLocaleString('vi-VN') : '-';
+          detailPanel.append(
+            field('Run ID', run.id),
+            field('Test Case', run.caseName),
+            field('Engine', run.engine),
+            field('Status', run.status.toUpperCase()),
+            field('Created', dateText(run.createdAt)),
+            field('Started', dateText((run as Run & { startedAt?: string | null }).startedAt)),
+            field('Finished', dateText((run as Run & { finishedAt?: string | null }).finishedAt)),
+            field('Duration', run.durationMs === null ? '-' : `${run.durationMs} ms`)
+          );
+          const outputTitle = document.createElement('strong');
+          outputTitle.textContent = 'Execution output';
+          const output = document.createElement('pre');
+          output.textContent = run.output || 'No execution output.';
+          output.style.cssText = 'margin:0;max-width:100%;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:10px;background:#eef2f7;border-radius:6px';
+          const errorTitle = document.createElement('strong');
+          errorTitle.textContent = 'Error message';
+          const error = document.createElement('pre');
+          error.textContent = run.errorMessage || 'No error message.';
+          error.style.cssText = 'margin:0;max-width:100%;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:10px;background:#eef2f7;border-radius:6px';
+          detailPanel.append(outputTitle, output, errorTitle, error);
+          detailCell.append(detailPanel);
+          detailRow.append(detailCell);
+          const toggle = button('View details', () => {
+            detailRow.hidden = !detailRow.hidden;
+            toggle.textContent = detailRow.hidden ? 'View details' : 'Hide details';
+            toggle.setAttribute('aria-expanded', String(!detailRow.hidden));
+          });
+          toggle.setAttribute('aria-expanded', 'false');
+          actionCell.append(toggle);
+          tr.append(actionCell);
+          body.append(tr, detailRow);
         }
         table.append(head, body);
         const scroll = document.createElement('div');
