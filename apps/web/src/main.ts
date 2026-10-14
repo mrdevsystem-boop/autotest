@@ -152,6 +152,128 @@ function renderDashboard(projectId: string): HTMLElement {
   dashboard.addEventListener('dashboard:load', () => { void load(); });
   return dashboard;
 }
+/** S1-05.3: project-wide run history with server-side status filtering and pagination. */
+interface ReportRunPage {
+  items: Run[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+function renderProjectRunHistory(projectId: string): HTMLElement {
+  const panel = document.createElement('div');
+  panel.className = 'report-run-history';
+  panel.style.cssText = 'margin:16px 0;padding:14px;border:1px solid #dce2ea;border-radius:10px;background:#fff';
+  const heading = document.createElement('h4');
+  heading.textContent = 'Project Run History';
+  const controls = document.createElement('div');
+  controls.style.cssText = 'display:flex;flex-wrap:wrap;align-items:center;gap:8px';
+  const statusLabel = document.createElement('label');
+  statusLabel.textContent = 'Status: ';
+  const statusSelect = document.createElement('select');
+  for (const value of ['', 'queued', 'running', 'passed', 'failed', 'error', 'cancelled']) {
+    const option = document.createElement('option');
+    option.value = value;
+    option.textContent = value ? value.toUpperCase() : 'All';
+    statusSelect.append(option);
+  }
+  statusLabel.append(statusSelect);
+  const sizeLabel = document.createElement('label');
+  sizeLabel.textContent = 'Page size: ';
+  const sizeSelect = document.createElement('select');
+  for (const size of [5, 10, 20]) {
+    const option = document.createElement('option');
+    option.value = String(size);
+    option.textContent = String(size);
+    sizeSelect.append(option);
+  }
+  sizeLabel.append(sizeSelect);
+  const refreshButton = button('Refresh history', () => { void load(); });
+  controls.append(statusLabel, sizeLabel, refreshButton);
+  const results = document.createElement('div');
+  results.setAttribute('aria-live', 'polite');
+  const footer = document.createElement('div');
+  footer.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:10px';
+  const previous = button('Previous', () => { offset = Math.max(0, offset - limit); void load(); });
+  const next = button('Next', () => { offset += limit; void load(); });
+  const pageInfo = document.createElement('span');
+  footer.append(previous, pageInfo, next);
+  panel.append(heading, controls, results, footer);
+
+  let offset = 0;
+  let limit = 5;
+  let sequence = 0;
+  let total = 0;
+  let loading = false;
+  function updateControls() {
+    previous.disabled = loading || offset === 0;
+    next.disabled = loading || offset + limit >= total;
+    refreshButton.disabled = loading;
+  }
+  async function load() {
+    if (!panel.isConnected) return;
+    const ticket = ++sequence;
+    loading = true;
+    updateControls();
+    results.textContent = 'Loading run history...';
+    const statusFilter = statusSelect.value;
+    const query = new URLSearchParams({ projectId, limit: String(limit), offset: String(offset) });
+    if (statusFilter) query.set('status', statusFilter);
+    try {
+      const { data } = await request<{ data: ReportRunPage }>(`/reports/runs?${query.toString()}`);
+      if (ticket !== sequence || !panel.isConnected) return;
+      total = data.total;
+      results.replaceChildren();
+      if (data.items.length === 0) {
+        results.textContent = 'No runs match this filter.';
+      } else {
+        const table = document.createElement('table');
+        table.style.cssText = 'width:100%;border-collapse:collapse;margin-top:10px';
+        const head = document.createElement('thead');
+        const headRow = document.createElement('tr');
+        for (const label of ['Test Case', 'Status', 'Created', 'Duration', 'Run ID']) {
+          const th = document.createElement('th');
+          th.textContent = label;
+          th.style.cssText = 'text-align:left;border-bottom:1px solid #dce2ea;padding:7px';
+          headRow.append(th);
+        }
+        head.append(headRow);
+        const body = document.createElement('tbody');
+        for (const run of data.items) {
+          const tr = document.createElement('tr');
+          const values = [run.caseName, run.status.toUpperCase(), new Date(run.createdAt).toLocaleString('vi-VN'), run.durationMs === null ? '-' : `${run.durationMs} ms`, run.id.slice(0, 8)];
+          for (let i = 0; i < values.length; i++) {
+            const td = document.createElement('td');
+            td.textContent = values[i];
+            td.style.cssText = 'border-bottom:1px solid #edf1f6;padding:7px;overflow-wrap:anywhere';
+            if (i === 1) td.className = `run-state ${run.status}`;
+            tr.append(td);
+          }
+          body.append(tr);
+        }
+        table.append(head, body);
+        const scroll = document.createElement('div');
+        scroll.style.overflowX = 'auto';
+        scroll.append(table);
+        results.append(scroll);
+      }
+      pageInfo.textContent = total === 0 ? '0 runs' : `${offset + 1}-${Math.min(offset + data.items.length, total)} of ${total}`;
+    } catch (error) {
+      if (ticket !== sequence || !panel.isConnected) return;
+      results.textContent = `Unable to load run history: ${String(error)}`;
+      pageInfo.textContent = 'Load failed';
+      total = 0;
+    } finally {
+      if (ticket === sequence) { loading = false; updateControls(); }
+    }
+  }
+  statusSelect.addEventListener('change', () => { offset = 0; void load(); });
+  sizeSelect.addEventListener('change', () => { limit = Number(sizeSelect.value); offset = 0; void load(); });
+  panel.addEventListener('history:load', () => { void load(); });
+  updateControls();
+  return panel;
+}
+
 async function refresh() {
   stopPolling();
   const projects = (await request<{ data: Project[] }>('/projects')).data;
@@ -164,6 +286,8 @@ async function refresh() {
     section.append(button('Xóa Project', () => { if (confirm(`Xóa Project ${project.name} và toàn bộ Suite/Case?`)) void act(async () => { await request(`/projects/${project.id}`, 'DELETE'); }); }));
     const dashboard = renderDashboard(project.id);
     section.append(dashboard);
+    const projectHistory = renderProjectRunHistory(project.id);
+    section.append(projectHistory);
     const suiteForm = document.createElement('form'); suiteForm.innerHTML = '<input name="name" maxlength="120" required placeholder="Tên Test Suite"> <button>Tạo Suite</button>';
     suiteForm.addEventListener('submit', e => { e.preventDefault(); const d = new FormData(suiteForm); void act(async () => { await request(`/projects/${project.id}/suites`, 'POST', { name: d.get('name') }); }); }); section.append(suiteForm);
     const suites = (await request<{ data: Suite[] }>(`/projects/${project.id}/suites`)).data;
@@ -213,6 +337,7 @@ async function refresh() {
     }
     projectsEl.append(section);
     dashboard.dispatchEvent(new Event('dashboard:load'));
+    projectHistory.dispatchEvent(new Event('history:load'));
   }
   if (!projects.length) projectsEl.append(line('Chưa có Project'));
 }
