@@ -97,6 +97,31 @@ export class SqliteStore {
       .run(next,startedAt,finishedAt,durationMs,(details.output??previous.output).slice(0,10000),(details.errorMessage??previous.errorMessage).slice(0,2000),id,expected);
     return result.changes ? this.getRun(id) : undefined;
   }
+  reportSummary(projectId: string) {
+    const rows = this.db.prepare(`
+      SELECT r.status AS status, COUNT(*) AS count
+      FROM test_runs r
+      JOIN test_cases c ON c.id = r.test_case_id
+      JOIN test_suites s ON s.id = c.suite_id
+      WHERE s.project_id = ?
+      GROUP BY r.status
+    `).all(projectId) as {status: RunStatus; count: number}[];
+    const counts: Record<RunStatus, number> = {queued:0,running:0,passed:0,failed:0,error:0,cancelled:0};
+    for (const row of rows) counts[row.status] = row.count;
+    const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+    const completed = counts.passed + counts.failed + counts.error;
+    return {...counts, total, completed, passRate: completed ? Math.round(counts.passed / completed * 10000) / 100 : 0};
+  }
+  reportRuns(projectId: string, status: RunStatus | undefined, limit: number, offset: number) {
+    const where = `FROM test_runs r
+      JOIN test_cases c ON c.id = r.test_case_id
+      JOIN test_suites s ON s.id = c.suite_id
+      WHERE s.project_id = ?${status ? ' AND r.status = ?' : ''}`;
+    const args: (string | number)[] = status ? [projectId, status] : [projectId];
+    const total = (this.db.prepare(`SELECT COUNT(*) AS n ${where}`).get(...args) as {n:number}).n;
+    const rows = this.db.prepare(`SELECT r.* ${where} ORDER BY r.created_at DESC, r.id DESC LIMIT ? OFFSET ?`).all(...args,limit,offset) as any[];
+    return {items: rows.map(row => this.run(row)!), total, limit, offset};
+  }
   close() { this.db.close(); }
   private project(row: any): Project | undefined { return row ? { id: row.id, name: row.name, description: row.description, createdAt: row.created_at } : undefined; }
   list(): Project[] { return (this.db.prepare('SELECT * FROM projects ORDER BY created_at, id').all() as any[]).map(r => this.project(r)!); }

@@ -1,10 +1,10 @@
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { PLATFORM_NAME, type HealthResponse } from '@aitest/contracts';
 import { ProjectStore, validProject } from './projects.js';
-import type { SqliteStore } from './sqlite.js';
+import type { SqliteStore, RunStatus } from './sqlite.js';
 import { parseWebSteps, executeWebSteps, InvalidStepsError, AssertionFailure } from './playwright-runner.js';
 type ProjectRepository = Pick<ProjectStore, 'list' | 'get' | 'create' | 'update' | 'delete'>;
-type Store = ProjectRepository & Partial<Pick<SqliteStore, 'listSuites' | 'createSuite' | 'deleteSuite' | 'getSuite' | 'updateSuite' | 'listCases' | 'createCase' | 'deleteCase' | 'getCase' | 'updateCase' | 'createRun' | 'getRun' | 'listRuns' | 'transitionRun'>>;
+type Store = ProjectRepository & Partial<Pick<SqliteStore, 'listSuites' | 'createSuite' | 'deleteSuite' | 'getSuite' | 'updateSuite' | 'listCases' | 'createCase' | 'deleteCase' | 'getCase' | 'updateCase' | 'createRun' | 'getRun' | 'listRuns' | 'transitionRun' | 'reportSummary' | 'reportRuns'>>;
 const send = (res: ServerResponse, status: number, body: unknown) => {
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8',
     'access-control-allow-origin': 'http://127.0.0.1:5173',
@@ -40,6 +40,26 @@ export function createApp(store: Store = new ProjectStore()) {
         try { const body = await bodyJson(req); if (!validProject(body)) return send(res, 400, { error: 'invalid_project' }); return send(res, 201, { data: store.create(body.name.trim(), body.description ?? '') }); }
         catch { return send(res, 400, { error: 'invalid_json_or_size' }); }
       }
+    }
+    // S1-05.1: project-scoped reporting; deleted cases cannot be attributed to a project in schema v3.
+    if (req.method === 'GET' && (url.pathname === '/api/reports/summary' || url.pathname === '/api/reports/runs')) {
+      const projectId = url.searchParams.get('projectId');
+      if (!projectId || !/^[0-9a-f-]{36}$/.test(projectId)) return send(res,400,{error:'invalid_project_id'});
+      if (!store.get(projectId)) return send(res,404,{error:'not_found'});
+      if (url.pathname === '/api/reports/summary') {
+        if (!store.reportSummary) return send(res,501,{error:'reporting_unavailable'});
+        return send(res,200,{data:store.reportSummary(projectId)});
+      }
+      if (!store.reportRuns) return send(res,501,{error:'reporting_unavailable'});
+      const statusParam = url.searchParams.get('status');
+      const statuses: RunStatus[] = ['queued','running','passed','failed','error','cancelled'];
+      if (statusParam !== null && !statuses.includes(statusParam as RunStatus)) return send(res,400,{error:'invalid_status'});
+      const limitParam = url.searchParams.get('limit') ?? '20';
+      const offsetParam = url.searchParams.get('offset') ?? '0';
+      if (!/^[0-9]+$/.test(limitParam) || !/^[0-9]+$/.test(offsetParam)) return send(res,400,{error:'invalid_pagination'});
+      const limit = Number(limitParam), offset = Number(offsetParam);
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100 || !Number.isSafeInteger(offset) || offset < 0) return send(res,400,{error:'invalid_pagination'});
+      return send(res,200,{data:store.reportRuns(projectId,statusParam as RunStatus | undefined,limit,offset)});
     }
     const match = /^\/api\/projects\/([0-9a-f-]{36})$/.exec(url.pathname);
     if (match) {
