@@ -1,4 +1,4 @@
-﻿# S1-06 — AI Test Case Generation
+# S1-06 — AI Test Case Generation
 
 Status: DESIGN APPROVED; IMPLEMENTATION PENDING
 
@@ -49,7 +49,7 @@ The example describes the schema, not a verified executable test.
 ## Output validation
 
 - 1..maxCases drafts
-- name: non-empty, maximum 200 characters
+- name: non-empty, maximum 120 characters
 - description: maximum 2000 characters
 - kind: web only
 - steps: 1..30 actions

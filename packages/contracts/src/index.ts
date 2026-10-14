@@ -1,4 +1,4 @@
-﻿export const PLATFORM_NAME = 'ai-testing-platform' as const;
+export const PLATFORM_NAME = 'ai-testing-platform' as const;
 export type RunnerType = 'PLAYWRIGHT' | 'SELENIUM' | 'PYTEST' | 'APPIUM_ANDROID' | 'APPIUM_IOS';
 export type DeviceKind = 'ANDROID_EMULATOR' | 'ANDROID_REAL' | 'IOS_SIMULATOR' | 'IOS_REAL';
 export type DeviceHealth = 'ONLINE' | 'OFFLINE' | 'DEGRADED' | 'MAINTENANCE';

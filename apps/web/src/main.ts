@@ -326,6 +326,146 @@ function renderProjectRunHistory(projectId: string): HTMLElement {
   return panel;
 }
 
+interface AiDraft {
+  name: string;
+  description: string;
+  kind: 'web';
+  steps: Array<Record<string, unknown>>;
+}
+
+function renderAiGeneration(suiteId: string): HTMLElement {
+  const panel = document.createElement('div');
+  panel.className = 'ai-generation';
+
+  const heading = document.createElement('h4');
+  heading.textContent = 'AI Test Case Generation';
+
+  const hint = document.createElement('p');
+  hint.className = 'hint';
+  hint.textContent = 'AI creates drafts only. Review and approve each draft before saving.';
+
+  const form = document.createElement('form');
+
+  const requirement = document.createElement('textarea');
+  requirement.placeholder = 'Describe the test requirement...';
+  requirement.maxLength = 4000;
+  requirement.required = true;
+  requirement.rows = 3;
+  requirement.style.width = '95%';
+
+  const maxCases = document.createElement('select');
+  maxCases.setAttribute('aria-label', 'Maximum generated test cases');
+
+  for (let n = 1; n <= 5; n++) {
+    const option = document.createElement('option');
+    option.value = String(n);
+    option.textContent = `${n} test case${n > 1 ? 's' : ''}`;
+    if (n === 3) option.selected = true;
+    maxCases.append(option);
+  }
+
+  const generate = document.createElement('button');
+  generate.type = 'submit';
+  generate.textContent = 'Generate with AI';
+
+  const message = document.createElement('p');
+  message.setAttribute('role', 'status');
+  message.setAttribute('aria-live', 'polite');
+
+  const draftsEl = document.createElement('div');
+
+  form.append(requirement, maxCases, generate);
+  panel.append(heading, hint, form, message, draftsEl);
+
+  form.addEventListener('submit', event => {
+    event.preventDefault();
+
+    void (async () => {
+      generate.disabled = true;
+      draftsEl.replaceChildren();
+      message.textContent = 'Generating test cases...';
+
+      try {
+        const response = await request<{ data: { drafts: AiDraft[] } }>(
+          '/ai/test-cases/generate',
+          'POST',
+          {
+            suiteId,
+            requirement: requirement.value.trim(),
+            maxCases: Number(maxCases.value),
+          },
+        );
+
+        if (!Array.isArray(response.data?.drafts)) {
+          throw new Error('Invalid AI response');
+        }
+
+        message.textContent = `${response.data.drafts.length} draft(s) generated. Review before saving.`;
+
+        for (const draft of response.data.drafts) {
+          const card = document.createElement('div');
+          card.className = 'case';
+
+          const name = document.createElement('strong');
+          name.textContent = draft.name;
+
+          const description = document.createElement('p');
+          description.textContent = draft.description;
+
+          const steps = document.createElement('pre');
+          steps.textContent = JSON.stringify(draft.steps, null, 2);
+          steps.style.whiteSpace = 'pre-wrap';
+          steps.style.overflowWrap = 'anywhere';
+
+          const approve = button('Approve & Save', () => {
+            void (async () => {
+              approve.disabled = true;
+
+              try {
+                await request(`/suites/${suiteId}/cases`, 'POST', {
+                  name: draft.name,
+                  description: draft.description,
+                  kind: draft.kind,
+                  steps: JSON.stringify(draft.steps),
+                });
+
+                card.remove();
+                status.textContent = `Approved and saved: ${draft.name}`;
+                if (draftsEl.childElementCount === 0) {
+                  await refresh();
+                } else {
+                  message.textContent = 'Test case saved. Review the remaining drafts.';
+                }
+              } catch (error) {
+                approve.disabled = false;
+                message.textContent = `Save failed: ${String(error)}`;
+              }
+            })();
+          });
+
+          const discard = button('Discard', () => {
+            card.remove();
+            message.textContent = 'Draft discarded. No test case was saved.';
+            if (draftsEl.childElementCount === 0) {
+              void refresh().catch(error => {
+                status.textContent = `Refresh failed: ${String(error)}`;
+              });
+            }
+          });
+
+          card.append(name, description, steps, approve, discard);
+          draftsEl.append(card);
+        }
+      } catch (error) {
+        message.textContent = `AI generation failed: ${String(error)}`;
+      } finally {
+        generate.disabled = false;
+      }
+    })();
+  });
+
+  return panel;
+}
 async function refresh() {
   stopPolling();
   const projects = (await request<{ data: Project[] }>('/projects')).data;
@@ -348,6 +488,7 @@ async function refresh() {
       const title = document.createElement('strong'); title.textContent = `Suite: ${suite.name}`; panel.append(title);
       panel.append(button('Sửa Suite', () => { const name = prompt('Tên Suite', suite.name); if (name !== null) void act(async () => { await request(`/suites/${suite.id}`, 'PUT', { name }); }); }));
       panel.append(button('Xóa Suite', () => { if (confirm(`Xóa Suite ${suite.name} và toàn bộ Case?`)) void act(async () => { await request(`/suites/${suite.id}`, 'DELETE'); }); }));
+      panel.append(renderAiGeneration(suite.id));
       const caseForm = document.createElement('form'); caseForm.innerHTML = '<input name="name" maxlength="120" required placeholder="Tên Test Case"> <select name="kind"><option value="web">Web</option><option value="api">API</option><option value="mobile">Mobile</option></select> <input name="description" maxlength="2000" placeholder="Mô tả"> <textarea name="steps" maxlength="5000" placeholder="Các bước kiểm thử"></textarea> <button>Tạo Case</button>';
       caseForm.addEventListener('submit', e => { e.preventDefault(); const d = new FormData(caseForm); void act(async () => { await request(`/suites/${suite.id}/cases`, 'POST', { name: d.get('name'), kind: d.get('kind'), description: d.get('description'), steps: d.get('steps') }); }); }); panel.append(caseForm);
       const cases = (await request<{ data: Case[] }>(`/suites/${suite.id}/cases`)).data;
